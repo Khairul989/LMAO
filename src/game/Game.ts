@@ -51,7 +51,17 @@ export function createGame(
   const world = buildWorld(scene, rng);
   const controller = createController(camera, canvas);
   controller.setColliders(world.colliders);
-  controller.teleport(world.spawn);
+  // offset each player's spawn a little so co-op survivors don't stack on one point
+  const spawn = world.spawn.clone();
+  if (mode !== "solo") {
+    let h = 0;
+    for (let i = 0; i < net.selfId.length; i++)
+      h = (h * 31 + net.selfId.charCodeAt(i)) >>> 0;
+    const ang = ((h % 360) * Math.PI) / 180;
+    spawn.x += Math.cos(ang) * 1.8;
+    spawn.z += Math.sin(ang) * 1.2;
+  }
+  controller.teleport(spawn);
   scene.add(controller.object);
 
   const flashlight = createFlashlight(camera);
@@ -179,15 +189,34 @@ export function createGame(
       }
     },
     onStart: () => {},
+    onDeath: (id) => onPeerDeath(id), // teammate died -> spectator model, room continues
+    onWin: () => triggerVictory(false), // teammate escaped -> team extract
     onHit: () => {},
   });
 
-  // --- input ---
-  let dead = false;
-  let won = false;
+  // --- player lifecycle state ---
+  let localDead = false; // this player's avatar is dead
+  let spectating = false; // dead but watching a living teammate
+  let won = false; // someone escaped -> team win
+  let ended = false; // whole room dead -> game over
+  let spectateIdx = 0;
+  let specName = "";
+  const deadPeers = new Set<string>();
+
+  function aliveRemotes(): RemotePlayer[] {
+    const out: RemotePlayer[] = [];
+    remotePlayers.forEach((rp, id) => {
+      if (!deadPeers.has(id)) out.push(rp);
+    });
+    return out;
+  }
+
+  function shortName(id: string): string {
+    return id.replace(/^LMAO-/, "").slice(0, 6) || "survivor";
+  }
 
   function onCanvasMouseDown(e: MouseEvent) {
-    if (dead || won) return;
+    if (won || ended || localDead) return;
     if (controller.isLocked() && e.button === 0) shoot();
   }
 
@@ -202,14 +231,18 @@ export function createGame(
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (dead || won) return;
-    if (e.code === "KeyF") {
-      flashlight.toggle();
-    } else if (e.code === "KeyR") {
-      weapon.reload();
-    } else if (e.code === "KeyE") {
-      tryEscape();
+    if (won || ended) return;
+    if (localDead) {
+      // spectator controls: cycle who we're watching
+      if (e.code === "KeyQ" || e.code === "Space") {
+        const n = aliveRemotes().length;
+        if (n > 0) spectateIdx = (spectateIdx + 1) % n;
+      }
+      return;
     }
+    if (e.code === "KeyF") flashlight.toggle();
+    else if (e.code === "KeyR") weapon.reload();
+    else if (e.code === "KeyE") tryEscape();
   }
 
   function keysFoundCount(): number {
@@ -223,22 +256,48 @@ export function createGame(
     if (keysFoundCount() >= KEYS.count) triggerVictory();
   }
 
-  function triggerVictory() {
-    if (won || dead) return;
+  function triggerVictory(broadcast = true) {
+    if (won || ended) return;
     won = true;
+    spectating = false;
     controller.unlock();
     audio.keyPickup();
     audio.stopAmbience();
+    if (broadcast && (isHost || isClient)) net.sendWin();
+    gameStore.setState({ spectating: false });
     gameStore.getState().setPhase("victory");
   }
 
+  // local player got caught
   function triggerDeath() {
-    if (dead || won) return;
-    dead = true;
+    if (localDead || won || ended) return;
+    localDead = true;
+    flashlight.setOn(false);
     controller.unlock();
     audio.jumpscare();
+    if (isHost || isClient) net.sendDeath(net.selfId);
+    if (mode === "solo" || aliveRemotes().length === 0) {
+      gameOver();
+    } else {
+      // become a spectator of a living teammate; the room (and host sim) continue
+      spectating = true;
+      spectateIdx = 0;
+    }
+  }
+
+  // a remote teammate died
+  function onPeerDeath(id: string) {
+    deadPeers.add(id);
+    if (localDead && spectating && aliveRemotes().length === 0) gameOver();
+  }
+
+  // everyone is dead -> game over
+  function gameOver() {
+    if (won || ended) return;
+    ended = true;
+    spectating = false;
     audio.stopAmbience();
-    gameStore.setState({ health: 0 });
+    gameStore.setState({ health: 0, spectating: false });
     gameStore.getState().setPhase("dead");
   }
 
@@ -282,6 +341,45 @@ export function createGame(
     toastTimer = secs;
   }
 
+  // alive player positions (self if alive + living remotes) for monster targeting
+  function alivePlayerPoints(): THREE.Vector3[] {
+    const pts: THREE.Vector3[] = [];
+    if (!localDead) pts.push(controller.object.position);
+    remotePlayers.forEach((rp, id) => {
+      if (!deadPeers.has(id))
+        pts.push(new THREE.Vector3(rp.state.x, 0, rp.state.z));
+    });
+    return pts;
+  }
+
+  // third-person follow-cam over a living teammate while dead
+  function updateSpectator(dt: number) {
+    const alive = aliveRemotes();
+    if (alive.length === 0) {
+      gameOver();
+      return;
+    }
+    if (spectateIdx >= alive.length) spectateIdx = 0;
+    const target = alive[spectateIdx];
+    const tp = target.root.position;
+    const ry = target.state.ry;
+    // sit behind & above the teammate
+    const camX = tp.x + Math.sin(ry) * 4.2;
+    const camZ = tp.z + Math.cos(ry) * 4.2;
+    const holder = controller.object;
+    holder.position.lerp(new THREE.Vector3(camX, 3.0, camZ), Math.min(1, 4 * dt));
+    camera.position.set(0, 0, 0);
+    // aim at the teammate (yaw on holder, pitch on camera) — matches controls convention
+    const fx = tp.x - holder.position.x;
+    const fy = tp.y + 1.3 - holder.position.y;
+    const fz = tp.z - holder.position.z;
+    const len = Math.hypot(fx, fy, fz) || 1;
+    holder.rotation.set(0, 0, 0);
+    holder.rotation.y = Math.atan2(-fx / len, -fz / len);
+    camera.rotation.x = Math.asin(Math.max(-1, Math.min(1, fy / len)));
+    specName = shortName(target.state.id);
+  }
+
   function frame() {
     raf = requestAnimationFrame(frame);
     const now = performance.now();
@@ -299,94 +397,108 @@ export function createGame(
       fpsTimer = 0;
     }
 
-    if (!dead && !won) {
-      controller(dt, now);
-      flashlight(dt, now);
-      weapon(dt, now);
-      pickups(dt, now);
+    // Sim runs until the room ends (won) or everyone is dead (ended).
+    // A dead-but-spectating player keeps the loop alive — crucially, a dead HOST
+    // keeps simulating the monster + broadcasting snapshots so survivors aren't stranded.
+    if (!won && !ended) {
+      flashlight(dt, now); // off & non-draining once dead; fades the beam out
       lighting(dt, now);
+
+      if (!localDead) {
+        controller(dt, now);
+        weapon(dt, now);
+        pickups(dt, now);
+      } else {
+        updateSpectator(dt);
+      }
 
       const playerPos = controller.object.position;
       _mpos.copy(monster.mesh.position);
 
-      // monster targeting (host picks nearest player)
+      // monster targeting (host) -> nearest LIVING player
       if (isHost) {
-        let nearest = playerPos;
-        let bestD = playerPos.distanceToSquared(_mpos);
-        remotePlayers.forEach((rp) => {
-          const d =
-            (rp.state.x - _mpos.x) ** 2 + (rp.state.z - _mpos.z) ** 2;
-          if (d < bestD) {
-            bestD = d;
-            nearest = new THREE.Vector3(rp.state.x, 0, rp.state.z);
+        const pts = alivePlayerPoints();
+        if (pts.length) {
+          let best = Infinity;
+          let nt = pts[0];
+          for (const p of pts) {
+            const d = (p.x - _mpos.x) ** 2 + (p.z - _mpos.z) ** 2;
+            if (d < best) {
+              best = d;
+              nt = p;
+            }
           }
-        });
-        monster.setTarget(nearest);
-      } else if (!isClient) {
-        monster.setTarget(playerPos);
+          monster.setTarget(nt);
+        }
+      } else if (!isClient && !localDead) {
+        monster.setTarget(playerPos); // solo
       }
 
-      // FREEZE RULE
+      // FREEZE RULE — only living players with a lit beam can freeze it
       const selfLit =
+        !localDead &&
         monster.alive &&
         flashlight.illuminates(camera, _mpos) &&
         !occluded(_mpos);
       if (!isClient) {
         let anyLit = selfLit;
-        remotePlayers.forEach((rp) => {
-          if (rp.state.lit) anyLit = true;
+        remotePlayers.forEach((rp, id) => {
+          if (!deadPeers.has(id) && rp.state.lit) anyLit = true;
         });
         monster.setFreeze(monster.alive && anyLit);
       }
       monster(dt, now);
 
-      // pickups collection (local)
-      const events = pickups.collect(playerPos);
-      for (const ev of events) {
-        if (ev.kind === "battery") {
-          flashlight.addBattery(BATTERY.refillPct);
-          setToast("+40% BATTERY");
-        } else if (ev.kind === "ammo") {
-          weapon.addAmmo(ev.n);
-          setToast(`+${ev.n} AMMO`);
-        } else if (ev.kind === "key") {
-          if (isClient) net.sendPickup("key", ev.index);
-          else {
-            const s = pickups.keyState();
-            s[ev.index] = true;
-            pickups.setKeyState(s);
-          }
-          setToast("BRASS KEY ACQUIRED");
-        }
-      }
-
-      // monster contact -> death (local adjudication using rendered position)
-      const contactDx = _mpos.x - playerPos.x;
-      const contactDz = _mpos.z - playerPos.z;
-      if (
-        monster.alive &&
-        contactDx * contactDx + contactDz * contactDz < 1.15 * 1.15
-      ) {
-        triggerDeath();
-      }
-
-      // door / victory prompt
-      const keys = keysFoundCount();
-      const nearDoor = world.doorBox.containsPoint(playerPos);
+      let keys = keysFoundCount();
       let prompt = "";
-      if (nearDoor) {
-        prompt =
-          keys >= KEYS.count
-            ? "Press E to ESCAPE"
-            : `The door is locked — ${KEYS.count - keys} key(s) left`;
-      }
+      let nearDoor = false;
 
-      // footstep audio
-      if (controller.moving) {
-        stepTimer -= dt;
-        if (stepTimer <= 0) {
-          stepTimer = 0.42;
-          audio.footstep();
+      // living-player-only interactions
+      if (!localDead) {
+        const events = pickups.collect(playerPos);
+        for (const ev of events) {
+          if (ev.kind === "battery") {
+            flashlight.addBattery(BATTERY.refillPct);
+            setToast("+40% BATTERY");
+          } else if (ev.kind === "ammo") {
+            weapon.addAmmo(ev.n);
+            setToast(`+${ev.n} AMMO`);
+          } else if (ev.kind === "key") {
+            if (isClient) net.sendPickup("key", ev.index);
+            else {
+              const s = pickups.keyState();
+              s[ev.index] = true;
+              pickups.setKeyState(s);
+            }
+            setToast("BRASS KEY ACQUIRED");
+          }
+        }
+
+        // monster contact -> local death
+        const contactDx = _mpos.x - playerPos.x;
+        const contactDz = _mpos.z - playerPos.z;
+        if (
+          monster.alive &&
+          contactDx * contactDx + contactDz * contactDz < 1.15 * 1.15
+        ) {
+          triggerDeath();
+        }
+
+        keys = keysFoundCount();
+        nearDoor = world.doorBox.containsPoint(playerPos);
+        if (nearDoor) {
+          prompt =
+            keys >= KEYS.count
+              ? "Press E to ESCAPE"
+              : `The door is locked — ${KEYS.count - keys} key(s) left`;
+        }
+
+        if (controller.moving) {
+          stepTimer -= dt;
+          if (stepTimer <= 0) {
+            stepTimer = 0.42;
+            audio.footstep();
+          }
         }
       }
 
@@ -394,17 +506,18 @@ export function createGame(
       netTimer += dt;
       if ((isHost || isClient) && netTimer >= tickInterval) {
         netTimer = 0;
-        const yaw = controller.getYaw();
-        const st: RemoteState = {
-          id: net.selfId,
-          x: playerPos.x,
-          y: playerPos.y,
-          z: playerPos.z,
-          ry: yaw,
-          flashlightOn: flashlight.on,
-          lit: selfLit,
-        };
-        net.sendState(st);
+        if (!localDead) {
+          const st: RemoteState = {
+            id: net.selfId,
+            x: playerPos.x,
+            y: playerPos.y,
+            z: playerPos.z,
+            ry: controller.getYaw(),
+            flashlightOn: flashlight.on,
+            lit: selfLit,
+          };
+          net.sendState(st);
+        }
         if (isHost) {
           const snap: NetSnapshot = {
             seed,
@@ -426,7 +539,7 @@ export function createGame(
         rp.root.position.x += (rp.state.x - rp.root.position.x) * 0.3;
         rp.root.position.z += (rp.state.z - rp.root.position.z) * 0.3;
         rp.root.rotation.y = rp.state.ry;
-        rp.cone.visible = rp.state.flashlightOn;
+        rp.cone.visible = rp.state.flashlightOn && !deadPeers.has(id);
       });
 
       // --- HUD throttle ---
@@ -447,6 +560,8 @@ export function createGame(
           nearDoor,
           remotePlayers: remotePlayers.size,
           fps,
+          spectating,
+          spectateName: specName,
         });
       }
     }
@@ -463,7 +578,7 @@ export function createGame(
     resume() {
       audio.resume();
       audio.startAmbience();
-      if (!dead && !won) controller.lock();
+      if (!localDead && !won && !ended) controller.lock();
     },
     dispose() {
       cancelAnimationFrame(raf);

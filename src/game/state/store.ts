@@ -16,6 +16,8 @@ const initialHud: HudState = {
   nearDoor: false,
   remotePlayers: 0,
   fps: 0,
+  spectating: false,
+  spectateName: "",
 };
 
 export interface GameStore extends HudState {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createGame, type GameHandle } from "@/game/Game";
 import type { NetManager } from "@/game/net/net";
 import type { Mode } from "@/game/types";
+import { useGameStore } from "@/game/state/store";
 
 export default function GameCanvas({
   mode,
@@ -17,6 +18,7 @@ export default function GameCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameHandle | null>(null);
   const [locked, setLocked] = useState(false);
+  const spectating = useGameStore((s) => s.spectating);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -40,7 +42,7 @@ export default function GameCanvas({
   return (
     <>
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
-      {!locked && (
+      {!locked && !spectating && (
         <div
           className="absolute inset-0 z-20 flex cursor-pointer items-center justify-center bg-black/70 text-center"
           onClick={() => gameRef.current?.resume()}

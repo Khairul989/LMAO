@@ -24,6 +24,8 @@ export interface NetCallbacks {
   ): void;
   onStart(seed: number): void;
   onPickup(kind: PickupKindNet, index: number, from: string): void;
+  onDeath(id: string): void;
+  onWin(): void;
   onHit(dmg: number): void;
 }
 
@@ -46,6 +48,8 @@ export interface NetManager {
     dz: number,
   ): void;
   sendPickup(kind: PickupKindNet, index: number): void;
+  sendDeath(id: string): void;
+  sendWin(): void;
   broadcastSnapshot(s: NetSnapshot): void;
   sendStart(seed: number): void;
   isHost(): boolean;
@@ -221,6 +225,20 @@ export function createNet(): NetManager {
       }
     },
 
+    sendDeath(id) {
+      // per-player death (spectator model): announce who died; nobody else dies.
+      if (mode === "host") broadcast({ t: "death", id });
+      else if (mode === "join" && hostConn?.open)
+        hostConn.send({ t: "death", id } as NetEvent);
+    },
+
+    sendWin() {
+      // team extract: anyone escaping wins it for the whole room.
+      if (mode === "host") broadcast({ t: "win" });
+      else if (mode === "join" && hostConn?.open)
+        hostConn.send({ t: "win" } as NetEvent);
+    },
+
     broadcastSnapshot(s) {
       if (mode === "host") broadcast({ t: "snapshot", s });
     },
@@ -272,6 +290,15 @@ export function createNet(): NetManager {
       case "pickup":
         cb?.onPickup(ev.kind, ev.index, conn.peer);
         break;
+      case "death":
+        // a teammate died -> mark them down (spectator model) and relay to others
+        cb?.onDeath(ev.id);
+        broadcast(ev, conn.peer);
+        break;
+      case "win":
+        cb?.onWin();
+        broadcast(ev, conn.peer);
+        break;
       default:
         break;
     }
@@ -287,6 +314,12 @@ export function createNet(): NetManager {
         break;
       case "start":
         cb?.onStart(ev.seed);
+        break;
+      case "death":
+        cb?.onDeath(ev.id);
+        break;
+      case "win":
+        cb?.onWin();
         break;
       case "hit":
         cb?.onHit(ev.dmg);

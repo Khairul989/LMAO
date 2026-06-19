@@ -1,0 +1,37 @@
+# Changelog
+
+## [0.2.0] - 2026-06-19
+
+### Added
+- **Co-op spectator mode** — when a player is caught, they no longer end the game. They
+  become a spectator with a third-person follow-cam over a living teammate (press **Q** to
+  switch survivor). The room (and crucially the host's simulation) keeps running.
+- **Shared victory (team extract)** — when any survivor escapes through the front door, the
+  whole room wins together.
+- Spectator HUD: "YOU DIED — SPECTATING <name>" banner, survivor count; personal HUD
+  (battery/ammo) hidden while dead.
+- Per-player spawn offset so co-op survivors no longer stack on the exact same spot.
+- Flashlight freeze rule now requires line-of-sight (a wall between you and the monster
+  blocks the freeze).
+- Favicon.
+
+### Changed
+- Death is now per-player (`{t:'death',id}`) instead of shared-fate. Game over only when
+  every player is dead. A dead host keeps simulating + broadcasting snapshots, so survivors
+  are never stranded.
+
+### Fixed
+- Co-op limbo bug: when the host died, survivors' monster/keys/door stopped syncing,
+  leaving them in a dark, unwinnable state ("black screen, can't proceed").
+- `requestPointerLock()` unhandled-rejection surfacing in the dev error overlay.
+
+## [0.1.0] - 2026-06-19
+
+### Added
+- Initial release of **LMAO — Last Mortals Alive: Online**, a co-op browser horror survival
+  shooter built with Next.js + React + Three.js.
+- Multi-room procedural floor plan, camera-bound flashlight + battery economy, raycast
+  weapon + ammo, freeze-rule monster AI, battery/ammo/brass-key pickups, lightning + synth
+  thunder, jumpscare death + 3-key door-escape victory.
+- Online co-op via WebRTC (PeerJS free broker, $0): host a room, share a 4-char code.
+- All audio synthesized with the Web Audio API; all materials procedural (no external assets).

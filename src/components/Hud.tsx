@@ -14,6 +14,8 @@ export default function Hud() {
   const prompt = useGameStore((s) => s.prompt);
   const remotePlayers = useGameStore((s) => s.remotePlayers);
   const fps = useGameStore((s) => s.fps);
+  const spectating = useGameStore((s) => s.spectating);
+  const spectateName = useGameStore((s) => s.spectateName);
 
   const batteryColor =
     battery > 50 ? "bg-toxic" : battery > 20 ? "bg-yellow-400" : "bg-blood";
@@ -21,16 +23,36 @@ export default function Hud() {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none font-mono text-white">
-      {/* crosshair */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <div className="relative h-5 w-5">
-          <span className="absolute left-1/2 top-0 h-1.5 w-0.5 -translate-x-1/2 bg-white/80" />
-          <span className="absolute bottom-0 left-1/2 h-1.5 w-0.5 -translate-x-1/2 bg-white/80" />
-          <span className="absolute left-0 top-1/2 h-0.5 w-1.5 -translate-y-1/2 bg-white/80" />
-          <span className="absolute right-0 top-1/2 h-0.5 w-1.5 -translate-y-1/2 bg-white/80" />
-          <span className="absolute left-1/2 top-1/2 h-0.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blood" />
+      {/* SPECTATOR MODE — dead, watching a teammate */}
+      {spectating && (
+        <>
+          <div className="absolute inset-0 vignette bg-blood/10" />
+          <div className="absolute left-1/2 top-8 -translate-x-1/2 text-center">
+            <div className="text-3xl font-black tracking-widest text-blood drop-shadow-[0_0_14px_rgba(200,30,30,0.8)]">
+              ☠ YOU DIED
+            </div>
+            <div className="mt-1 text-sm uppercase tracking-[0.3em] text-white/70">
+              Spectating <span className="text-cyber">{spectateName || "…"}</span>
+            </div>
+            <div className="mt-1 text-xs text-white/40">
+              Press Q to switch survivor · your team can still escape
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* crosshair (living only) */}
+      {!spectating && (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          <div className="relative h-5 w-5">
+            <span className="absolute left-1/2 top-0 h-1.5 w-0.5 -translate-x-1/2 bg-white/80" />
+            <span className="absolute bottom-0 left-1/2 h-1.5 w-0.5 -translate-x-1/2 bg-white/80" />
+            <span className="absolute left-0 top-1/2 h-0.5 w-1.5 -translate-y-1/2 bg-white/80" />
+            <span className="absolute right-0 top-1/2 h-0.5 w-1.5 -translate-y-1/2 bg-white/80" />
+            <span className="absolute left-1/2 top-1/2 h-0.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blood" />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* FROZEN indicator */}
       {monsterFrozen && (
@@ -92,38 +114,42 @@ export default function Hud() {
         </div>
       </div>
 
-      {/* bottom-left: battery + flashlight */}
-      <div className="absolute bottom-6 left-6 w-64">
-        <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-widest text-white/50">
-          <span>🔦 Flashlight {flashlightOn ? "" : "(OFF)"}</span>
-          <span className={low ? "text-blood" : ""}>{Math.ceil(battery)}%</span>
-        </div>
-        <div className="h-4 w-full overflow-hidden rounded-full border border-white/20 bg-black/60">
-          <div
-            className={`h-full ${batteryColor} ${low ? "animate-pulseBar" : ""} transition-[width] duration-200`}
-            style={{ width: `${Math.max(0, Math.min(100, battery))}%` }}
-          />
-        </div>
-        {battery <= 0 && (
-          <div className="mt-1 text-xs font-bold text-blood">
-            BATTERY DEAD — IT CAN MOVE
+      {/* bottom-left: battery + flashlight (living only) */}
+      {!spectating && (
+        <div className="absolute bottom-6 left-6 w-64">
+          <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-widest text-white/50">
+            <span>🔦 Flashlight {flashlightOn ? "" : "(OFF)"}</span>
+            <span className={low ? "text-blood" : ""}>{Math.ceil(battery)}%</span>
           </div>
-        )}
-      </div>
+          <div className="h-4 w-full overflow-hidden rounded-full border border-white/20 bg-black/60">
+            <div
+              className={`h-full ${batteryColor} ${low ? "animate-pulseBar" : ""} transition-[width] duration-200`}
+              style={{ width: `${Math.max(0, Math.min(100, battery))}%` }}
+            />
+          </div>
+          {battery <= 0 && (
+            <div className="mt-1 text-xs font-bold text-blood">
+              BATTERY DEAD — IT CAN MOVE
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* bottom-right: ammo */}
-      <div className="absolute bottom-6 right-6 text-right">
-        <div className="text-[11px] uppercase tracking-widest text-white/50">
-          Ammo
+      {/* bottom-right: ammo (living only) */}
+      {!spectating && (
+        <div className="absolute bottom-6 right-6 text-right">
+          <div className="text-[11px] uppercase tracking-widest text-white/50">
+            Ammo
+          </div>
+          <div className="font-mono text-4xl font-black leading-none">
+            <span className={ammo === 0 ? "text-blood" : "text-white"}>{ammo}</span>
+            <span className="text-xl text-white/40"> / {reserve}</span>
+          </div>
+          {ammo === 0 && reserve > 0 && (
+            <div className="text-xs text-yellow-400">Press R to reload</div>
+          )}
         </div>
-        <div className="font-mono text-4xl font-black leading-none">
-          <span className={ammo === 0 ? "text-blood" : "text-white"}>{ammo}</span>
-          <span className="text-xl text-white/40"> / {reserve}</span>
-        </div>
-        {ammo === 0 && reserve > 0 && (
-          <div className="text-xs text-yellow-400">Press R to reload</div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

@@ -17,6 +17,8 @@ export interface HudState {
   nearDoor: boolean;
   remotePlayers: number;
   fps: number;
+  spectating: boolean; // local player dead but watching a living teammate
+  spectateName: string; // who we're watching
 }
 
 export interface WorldData {
@@ -64,6 +66,8 @@ export type NetEvent =
   | { t: "snapshot"; s: NetSnapshot }
   | { t: "start"; seed: number }
   | { t: "pickup"; kind: PickupKindNet; index: number }
+  | { t: "death"; id: string }
+  | { t: "win" }
   | { t: "hit"; dmg: number };
 
 export interface ModuleUpdate {

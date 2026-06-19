@@ -48,6 +48,8 @@ export default function GameShell() {
         setRunId((r) => r + 1);
         setPhase("playing");
       },
+      onDeath: () => {},
+      onWin: () => {},
       onHit: () => {},
     }),
     [setPhase],
