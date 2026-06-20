@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0] - 2026-06-20
+
+### Added
+- **Mobile / touch support** — phones & tablets get full on-screen controls (auto-detected
+  via coarse pointer / touch):
+  - Left-thumb virtual joystick to move (appears where you press).
+  - Drag the right side of the screen to look around.
+  - Buttons: 🔫 shoot (hold to auto-fire), 🔦 flashlight toggle, ⟳ reload, E interact
+    (pulses gold at the door). While spectating, controls collapse to a single 👁
+    switch-view button.
+  - Tap-to-start screen (unlocks audio); no pointer-lock on mobile.
+- Controller now accepts analog move input + touch look deltas; `Game` exposes a mobile
+  `input` API (move / look / shoot / toggleFlashlight / reload / interact / cycleSpectate).
+
+### Changed
+- Renderer caps device pixel ratio to 1.5 on touch devices so hi-DPI phones don't choke.
+- Desktop controls unchanged (WASD + mouse + pointer-lock).
+
 ## [0.2.0] - 2026-06-19
 
 ### Added

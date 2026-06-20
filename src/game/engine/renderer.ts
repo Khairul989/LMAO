@@ -14,7 +14,11 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererBundle {
     antialias: true,
     powerPreference: "high-performance",
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // phones: cap DPR so we don't melt the GPU on hi-dpi screens
+  const coarse =
+    typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
+  const maxDpr = coarse ? 1.5 : 2;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxDpr));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -39,7 +43,7 @@ export function createRenderer(canvas: HTMLCanvasElement): RendererBundle {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h, false);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxDpr));
   }
 
   window.addEventListener("resize", onResize);

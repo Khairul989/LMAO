@@ -12,6 +12,8 @@ export interface PlayerController extends ModuleUpdate {
   setColliders(boxes: THREE.Box3[]): void;
   teleport(v: THREE.Vector3): void;
   getYaw(): number;
+  setMoveInput(x: number, y: number): void; // analog move from touch (-1..1)
+  look(dx: number, dy: number): void; // look delta from touch (pixels)
   dispose(): void;
 }
 
@@ -28,16 +30,20 @@ export function createController(
 
   const velocity = new THREE.Vector3();
   const keys: Record<string, boolean> = {};
+  const moveInput = { x: 0, y: 0 }; // analog touch joystick (-1..1), +y = forward
   let colliders: THREE.Box3[] = [];
   let pitch = 0;
   let bobPhase = 0;
   const sensitivity = 0.0022;
+  const touchSensitivity = 0.005;
   const PITCH_LIMIT = Math.PI / 2 - 0.05;
 
   const ctrl: PlayerController = ((dt: number) => {
-    // --- desired movement in local space ---
-    const forward = (keys["KeyW"] || keys["ArrowUp"] ? 1 : 0) - (keys["KeyS"] || keys["ArrowDown"] ? 1 : 0);
-    const strafe = (keys["KeyD"] || keys["ArrowRight"] ? 1 : 0) - (keys["KeyA"] || keys["ArrowLeft"] ? 1 : 0);
+    // --- desired movement (keyboard + analog touch, combined & clamped) ---
+    const kf = (keys["KeyW"] || keys["ArrowUp"] ? 1 : 0) - (keys["KeyS"] || keys["ArrowDown"] ? 1 : 0);
+    const ks = (keys["KeyD"] || keys["ArrowRight"] ? 1 : 0) - (keys["KeyA"] || keys["ArrowLeft"] ? 1 : 0);
+    const forward = Math.max(-1, Math.min(1, kf + moveInput.y));
+    const strafe = Math.max(-1, Math.min(1, ks + moveInput.x));
     const sprint = keys["ShiftLeft"] || keys["ShiftRight"] ? PLAYER.sprintMul : 1;
 
     const dir = new THREE.Vector3(strafe, 0, -forward);
@@ -49,7 +55,7 @@ export function createController(
     const target = dir.multiplyScalar(targetSpeed);
 
     // accelerate toward target, damp when idle
-    const hasInput = forward !== 0 || strafe !== 0;
+    const hasInput = Math.abs(forward) > 0.05 || Math.abs(strafe) > 0.05;
     const rate = hasInput ? PLAYER.accel : PLAYER.damping;
     velocity.x += (target.x - velocity.x) * Math.min(1, rate * dt);
     velocity.z += (target.z - velocity.z) * Math.min(1, rate * dt);
@@ -150,6 +156,17 @@ export function createController(
     velocity.set(0, 0, 0);
   };
   ctrl.getYaw = () => yawObject.rotation.y;
+  ctrl.setMoveInput = (x, y) => {
+    moveInput.x = x;
+    moveInput.y = y;
+  };
+  ctrl.look = (dx, dy) => {
+    // touch look — applies regardless of pointer lock
+    yawObject.rotation.y -= dx * touchSensitivity;
+    pitch -= dy * touchSensitivity;
+    pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
+    camera.rotation.x = pitch;
+  };
   ctrl.dispose = () => {
     document.removeEventListener("mousemove", onMouseMove);
     document.removeEventListener("keydown", onKeyDown);

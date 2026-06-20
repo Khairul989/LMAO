@@ -20,9 +20,20 @@ export interface GameOptions {
   seed: number;
 }
 
+export interface GameInput {
+  move(x: number, y: number): void; // analog -1..1
+  look(dx: number, dy: number): void; // pixel deltas
+  shoot(): void;
+  toggleFlashlight(): void;
+  reload(): void;
+  interact(): void;
+  cycleSpectate(): void;
+}
+
 export interface GameHandle {
   start(): void;
   resume(): void; // call from a user gesture: unlock audio + acquire pointer lock
+  input: GameInput; // touch / mobile control surface
   dispose(): void;
 }
 
@@ -230,14 +241,16 @@ export function createGame(
     }
   }
 
+  function cycleSpectate() {
+    const n = aliveRemotes().length;
+    if (n > 0) spectateIdx = (spectateIdx + 1) % n;
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     if (won || ended) return;
     if (localDead) {
       // spectator controls: cycle who we're watching
-      if (e.code === "KeyQ" || e.code === "Space") {
-        const n = aliveRemotes().length;
-        if (n > 0) spectateIdx = (spectateIdx + 1) % n;
-      }
+      if (e.code === "KeyQ" || e.code === "Space") cycleSpectate();
       return;
     }
     if (e.code === "KeyF") flashlight.toggle();
@@ -579,6 +592,30 @@ export function createGame(
       audio.resume();
       audio.startAmbience();
       if (!localDead && !won && !ended) controller.lock();
+    },
+    input: {
+      move(x, y) {
+        if (!localDead && !won && !ended) controller.setMoveInput(x, y);
+        else controller.setMoveInput(0, 0);
+      },
+      look(dx, dy) {
+        if (!localDead && !won && !ended) controller.look(dx, dy);
+      },
+      shoot() {
+        if (!localDead && !won && !ended) shoot();
+      },
+      toggleFlashlight() {
+        if (!localDead && !won && !ended) flashlight.toggle();
+      },
+      reload() {
+        if (!localDead && !won && !ended) weapon.reload();
+      },
+      interact() {
+        if (!localDead && !won && !ended) tryEscape();
+      },
+      cycleSpectate() {
+        if (localDead && spectating) cycleSpectate();
+      },
     },
     dispose() {
       cancelAnimationFrame(raf);
