@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useGameStore } from "@/game/state/store";
 import { KEYS } from "@/game/config";
 
@@ -16,6 +17,16 @@ export default function Hud() {
   const fps = useGameStore((s) => s.fps);
   const spectating = useGameStore((s) => s.spectating);
   const spectateName = useGameStore((s) => s.spectateName);
+
+  // touch devices: lift battery/ammo off the bottom so they don't sit under the buttons
+  const [isTouch, setIsTouch] = useState(false);
+  useEffect(() => {
+    setIsTouch(
+      (typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches) ||
+        "ontouchstart" in window ||
+        (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0),
+    );
+  }, []);
 
   const batteryColor =
     battery > 50 ? "bg-toxic" : battery > 20 ? "bg-yellow-400" : "bg-blood";
@@ -114,9 +125,13 @@ export default function Hud() {
         </div>
       </div>
 
-      {/* bottom-left: battery + flashlight (living only) */}
+      {/* battery + flashlight (living only) — top-left on touch, bottom-left on desktop */}
       {!spectating && (
-        <div className="absolute bottom-6 left-6 w-64">
+        <div
+          className={`absolute w-52 sm:w-64 ${
+            isTouch ? "left-4 top-28" : "bottom-6 left-6"
+          }`}
+        >
           <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-widest text-white/50">
             <span>🔦 Flashlight {flashlightOn ? "" : "(OFF)"}</span>
             <span className={low ? "text-blood" : ""}>{Math.ceil(battery)}%</span>
@@ -135,9 +150,13 @@ export default function Hud() {
         </div>
       )}
 
-      {/* bottom-right: ammo (living only) */}
+      {/* ammo (living only) — top-right on touch, bottom-right on desktop */}
       {!spectating && (
-        <div className="absolute bottom-6 right-6 text-right">
+        <div
+          className={`absolute text-right ${
+            isTouch ? "right-4 top-28" : "bottom-6 right-6"
+          }`}
+        >
           <div className="text-[11px] uppercase tracking-widest text-white/50">
             Ammo
           </div>

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1] - 2026-06-20
+
+### Changed
+- Tidied the mobile HUD: on touch devices the battery (top-left) and ammo (top-right) now
+  sit at the top, clear of the bottom-right control cluster — no more overlap in portrait.
+- Removed the redundant on-screen "drag to move / drag to look" hints (the tap-to-start
+  screen already explains controls).
+
 ## [0.3.0] - 2026-06-20
 
 ### Added

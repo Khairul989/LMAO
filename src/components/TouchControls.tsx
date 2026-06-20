@@ -139,16 +139,6 @@ export default function TouchControls({
             />
           </>
         )}
-        {!joy.active && (
-          <div className="absolute bottom-10 left-10 text-[11px] uppercase tracking-widest text-white/30">
-            ◐ drag to move
-          </div>
-        )}
-      </div>
-
-      {/* hint for look */}
-      <div className="absolute right-6 top-1/2 -translate-y-1/2 text-right text-[11px] uppercase leading-relaxed tracking-widest text-white/25">
-        drag here<br />to look
       </div>
 
       {spectating ? (
