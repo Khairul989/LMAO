@@ -22,11 +22,18 @@ export interface Monster extends ModuleUpdate {
 
 const RADIUS = 0.5;
 
+export interface MonsterOpts {
+  speedMul?: number;
+}
+
 export function createMonster(
   scene: THREE.Scene,
   world: WorldData,
+  rng: () => number,
   audio: AudioEngine,
+  opts: MonsterOpts = {},
 ): Monster {
+  const speedMul = opts.speedMul ?? 1;
   const root = new THREE.Group();
   root.name = "monster";
 
@@ -69,13 +76,15 @@ export function createMonster(
   torso.castShadow = true;
   head.castShadow = true;
 
-  // spawn far from the player (north end), pick a back room
+  // spawn far from the player (north end), pick a back room (seeded)
   const spawnPts = [
     new THREE.Vector3(-6, 0, 3),
     new THREE.Vector3(6, 0, 3),
     new THREE.Vector3(0, 0, 2),
+    new THREE.Vector3(-6, 0, 8),
+    new THREE.Vector3(6, 0, 8),
   ];
-  const sp = spawnPts[Math.floor(Math.random() * spawnPts.length)];
+  const sp = spawnPts[Math.floor(rng() * spawnPts.length)];
   root.position.set(sp.x, 0, sp.z);
   scene.add(root);
 
@@ -94,8 +103,8 @@ export function createMonster(
         const dx = target.x - root.position.x;
         const dz = target.z - root.position.z;
         const len = Math.hypot(dx, dz) || 1;
-        const desiredX = (dx / len) * MONSTER.speed;
-        const desiredZ = (dz / len) * MONSTER.speed;
+        const desiredX = (dx / len) * MONSTER.speed * speedMul;
+        const desiredZ = (dz / len) * MONSTER.speed * speedMul;
         velocity.x += (desiredX - velocity.x) * Math.min(1, MONSTER.accel * dt);
         velocity.z += (desiredZ - velocity.z) * Math.min(1, MONSTER.accel * dt);
 

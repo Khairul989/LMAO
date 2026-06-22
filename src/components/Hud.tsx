@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useGameStore } from "@/game/state/store";
-import { KEYS } from "@/game/config";
 
 export default function Hud() {
   const battery = useGameStore((s) => s.battery);
@@ -10,6 +9,8 @@ export default function Hud() {
   const ammo = useGameStore((s) => s.ammo);
   const reserve = useGameStore((s) => s.reserveAmmo);
   const keysFound = useGameStore((s) => s.keysFound);
+  const keysTotal = useGameStore((s) => s.keysTotal);
+  const level = useGameStore((s) => s.level);
   const monsterFrozen = useGameStore((s) => s.monsterFrozen);
   const toast = useGameStore((s) => s.toast);
   const prompt = useGameStore((s) => s.prompt);
@@ -91,11 +92,14 @@ export default function Hud() {
       {/* top bar: keys + players + fps */}
       <div className="absolute left-0 right-0 top-0 flex items-start justify-between p-5">
         <div className="rounded-lg border border-white/10 bg-black/50 px-4 py-2 backdrop-blur-sm">
-          <div className="mb-1 text-[10px] uppercase tracking-widest text-white/40">
-            Brass Keys
+          <div className="mb-1 flex items-center justify-between gap-3 text-[10px] uppercase tracking-widest text-white/40">
+            <span>Brass Keys</span>
+            <span className="rounded bg-blood/25 px-1.5 py-0.5 font-bold text-blood">
+              ⛓ Level {level}
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            {Array.from({ length: KEYS.count }).map((_, i) => (
+            {Array.from({ length: keysTotal }).map((_, i) => (
               <span
                 key={i}
                 className={`text-2xl transition ${
@@ -108,7 +112,7 @@ export default function Hud() {
               </span>
             ))}
             <span className="ml-1 text-sm text-white/60">
-              {keysFound}/{KEYS.count}
+              {keysFound}/{keysTotal}
             </span>
           </div>
         </div>

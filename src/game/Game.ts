@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { AMMO, BATTERY, KEYS, NET } from "@/game/config";
+import { AMMO, BATTERY, DESCEND, FLASHLIGHT, NET, levelSpec } from "@/game/config";
 import { AudioEngine } from "@/game/audio/audio";
 import { createRenderer } from "@/game/engine/renderer";
 import { buildWorld } from "@/game/world/floorplan";
@@ -7,12 +7,12 @@ import { createLighting } from "@/game/world/lighting";
 import { createController } from "@/game/player/controls";
 import { createFlashlight } from "@/game/player/flashlight";
 import { createWeapon } from "@/game/combat/weapon";
-import { createPickups } from "@/game/items/pickups";
-import { createMonster } from "@/game/monster/monster";
+import { createPickups, type Pickups } from "@/game/items/pickups";
+import { createMonster, type Monster } from "@/game/monster/monster";
 import type { NetManager } from "@/game/net/net";
 import { gameStore } from "@/game/state/store";
 import { mulberry32 } from "@/game/rng";
-import type { Mode, NetSnapshot, RemoteState } from "@/game/types";
+import type { Mode, NetSnapshot, RemoteState, WorldData } from "@/game/types";
 
 export interface GameOptions {
   mode: Mode;
@@ -54,35 +54,73 @@ export function createGame(
   const isHost = mode === "host";
   const isClient = mode === "join";
 
-  const rng = mulberry32(seed);
   const audio = new AudioEngine();
   const { scene, camera, renderer, dispose: disposeRenderer } =
     createRenderer(canvas);
 
-  const world = buildWorld(scene, rng);
   const controller = createController(camera, canvas);
-  controller.setColliders(world.colliders);
-  // offset each player's spawn a little so co-op survivors don't stack on one point
-  const spawn = world.spawn.clone();
-  if (mode !== "solo") {
-    let h = 0;
-    for (let i = 0; i < net.selfId.length; i++)
-      h = (h * 31 + net.selfId.charCodeAt(i)) >>> 0;
-    const ang = ((h % 360) * Math.PI) / 180;
-    spawn.x += Math.cos(ang) * 1.8;
-    spawn.z += Math.sin(ang) * 1.2;
-  }
-  controller.teleport(spawn);
   scene.add(controller.object);
-
   const flashlight = createFlashlight(camera);
   const weapon = createWeapon(camera, audio);
-  const pickups = createPickups(scene, world, rng, audio);
-  const monster = createMonster(scene, world, audio);
-  monster.aiEnabled = !isClient; // clients follow host snapshots
   const lighting = createLighting(scene, audio);
 
-  const store = gameStore.getState();
+  // --- per-floor content (rebuilt on every descent) ---
+  let level = 1;
+  let world!: WorldData;
+  let pickups!: Pickups;
+  let monsters: Monster[] = [];
+  let clientKeyState: boolean[] = [];
+
+  // Each floor gets its own deterministic seed derived from the room seed, so
+  // every peer builds the identical floor for a given level.
+  function levelSeed(l: number): number {
+    return (seed + l * 0x9e3779b1) >>> 0;
+  }
+
+  function spawnFor(w: WorldData): THREE.Vector3 {
+    const sp = w.spawn.clone();
+    if (mode !== "solo") {
+      // offset each player's spawn a little so co-op survivors don't stack
+      let h = 0;
+      for (let i = 0; i < net.selfId.length; i++)
+        h = (h * 31 + net.selfId.charCodeAt(i)) >>> 0;
+      const ang = ((h % 360) * Math.PI) / 180;
+      sp.x += Math.cos(ang) * 1.8;
+      sp.z += Math.sin(ang) * 1.2;
+    }
+    return sp;
+  }
+
+  function buildLevelContent(l: number) {
+    const spec = levelSpec(l);
+    const rng = mulberry32(levelSeed(l));
+    world = buildWorld(scene, rng);
+    controller.setColliders(world.colliders);
+    pickups = createPickups(scene, world, rng, audio, spec.keys);
+    monsters = [];
+    for (let i = 0; i < spec.monsters; i++) {
+      const m = createMonster(scene, world, rng, audio, {
+        speedMul: spec.monsterSpeedMul,
+      });
+      m.aiEnabled = !isClient; // clients follow host snapshots
+      monsters.push(m);
+    }
+    flashlight.setDrainMul(spec.batteryDrainMul);
+    scene.fog = new THREE.FogExp2(0x05060a, spec.fogDensity);
+    clientKeyState = new Array(spec.keys).fill(false);
+    controller.teleport(spawnFor(world));
+    gameStore.setState({ level: l, keysTotal: spec.keys, keysFound: 0 });
+  }
+
+  function disposeLevelContent() {
+    pickups?.dispose();
+    monsters.forEach((m) => m.dispose());
+    monsters = [];
+    world?.dispose();
+  }
+
+  buildLevelContent(1);
+
   gameStore.setState({
     battery: flashlight.battery,
     ammo: weapon.ammo,
@@ -92,11 +130,9 @@ export function createGame(
     health: 100,
     flashlightOn: flashlight.on,
   });
-  void store;
 
   // --- remote players ---
   const remotePlayers = new Map<string, RemotePlayer>();
-  let clientKeyState: boolean[] = new Array(KEYS.count).fill(false);
 
   function avatarColor(id: string): number {
     let h = 0;
@@ -138,7 +174,7 @@ export function createGame(
     root.add(body, head, cone);
     scene.add(root);
     const rp: RemotePlayer = {
-      state: { id, x: 0, y: 0, z: 0, ry: 0, flashlightOn: true, lit: false },
+      state: { id, x: 0, y: 0, z: 0, ry: 0, flashlightOn: true, lit: 0 },
       lastSeen: performance.now(),
       root,
       cone,
@@ -174,21 +210,28 @@ export function createGame(
     },
     onSnapshot: (s: NetSnapshot) => {
       if (!isClient) return;
-      monster.setState(s.monster);
+      // host moved to a deeper floor before us -> resync
+      if (s.level !== level) {
+        doDescend(s.level);
+        return;
+      }
+      for (let i = 0; i < monsters.length && i < s.monsters.length; i++)
+        monsters[i].setState(s.monsters[i]);
       pickups.setKeyState(s.keys);
       clientKeyState = s.keys;
       if (s.lightning) lighting.flashNow();
     },
     onShoot: (ox, oy, oz, dx, dy, dz) => {
       if (!isHost) return;
-      // host adjudicates a client's shot against the monster
+      // host adjudicates a client's shot against the monsters
       const ray = new THREE.Raycaster(
         new THREE.Vector3(ox, oy, oz),
         new THREE.Vector3(dx, dy, dz).normalize(),
       );
       ray.far = 80;
-      const hits = ray.intersectObject(monster.hitGroup, true);
-      if (hits.length) monster.damage(AMMO.damagePerShot);
+      const groups = monsters.filter((m) => m.alive).map((m) => m.hitGroup);
+      const hits = ray.intersectObjects(groups, true);
+      if (hits.length) damageHitObject(hits[0].object);
     },
     onPickup: (kind, index) => {
       if (!isHost) return;
@@ -201,14 +244,28 @@ export function createGame(
     },
     onStart: () => {},
     onDeath: (id) => onPeerDeath(id), // teammate died -> spectator model, room continues
-    onWin: () => triggerVictory(false), // teammate escaped -> team extract
+    onWin: () => {}, // legacy team-extract; descent replaces it
+    onEscape: () => hostDescend(), // a client reached the door -> host descends the room
+    onDescend: (l) => doDescend(l), // host dropped us to the next floor
     onHit: () => {},
   });
+
+  // walk a raycast hit up to its monster root and damage it
+  function damageHitObject(obj: THREE.Object3D) {
+    let o: THREE.Object3D | null = obj;
+    while (o) {
+      const m = monsters.find((mm) => mm.hitGroup === o);
+      if (m) {
+        m.damage(AMMO.damagePerShot);
+        return;
+      }
+      o = o.parent;
+    }
+  }
 
   // --- player lifecycle state ---
   let localDead = false; // this player's avatar is dead
   let spectating = false; // dead but watching a living teammate
-  let won = false; // someone escaped -> team win
   let ended = false; // whole room dead -> game over
   let spectateIdx = 0;
   let specName = "";
@@ -227,7 +284,7 @@ export function createGame(
   }
 
   function onCanvasMouseDown(e: MouseEvent) {
-    if (won || ended || localDead) return;
+    if (ended || localDead) return;
     if (controller.isLocked() && e.button === 0) shoot();
   }
 
@@ -236,8 +293,9 @@ export function createGame(
       const r = weapon.tryShoot([]); // local fx + ammo only; host adjudicates
       if (r) net.sendShoot(r.origin.x, r.origin.y, r.origin.z, r.dir.x, r.dir.y, r.dir.z);
     } else {
-      const r = weapon.tryShoot([monster.hitGroup]);
-      if (r?.hit) monster.damage(AMMO.damagePerShot);
+      const groups = monsters.filter((m) => m.alive).map((m) => m.hitGroup);
+      const r = weapon.tryShoot(groups);
+      if (r?.hit) damageHitObject(r.hit);
     }
   }
 
@@ -247,7 +305,7 @@ export function createGame(
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (won || ended) return;
+    if (ended) return;
     if (localDead) {
       // spectator controls: cycle who we're watching
       if (e.code === "KeyQ" || e.code === "Space") cycleSpectate();
@@ -264,26 +322,43 @@ export function createGame(
   }
 
   function tryEscape() {
+    if (localDead || ended) return;
     const playerPos = controller.object.position;
     if (!world.doorBox.containsPoint(playerPos)) return;
-    if (keysFoundCount() >= KEYS.count) triggerVictory();
+    if (keysFoundCount() < levelSpec(level).keys) return;
+    if (isClient) net.sendEscape(); // ask the host to descend the whole room
+    else hostDescend(); // solo + host descend immediately
   }
 
-  function triggerVictory(broadcast = true) {
-    if (won || ended) return;
-    won = true;
+  // host (or solo) advances the floor and tells everyone to follow
+  function hostDescend() {
+    if (ended || isClient) return;
+    const next = level + 1;
+    net.sendDescend(next);
+    doDescend(next);
+  }
+
+  // tear down the floor and rebuild the next one; revive everyone for a clean run
+  function doDescend(l: number) {
+    if (ended) return;
+    level = l;
+    localDead = false;
     spectating = false;
-    controller.unlock();
+    deadPeers.clear();
+    disposeLevelContent();
+    buildLevelContent(l);
+    // descent rewards: fresh battery + a little ammo
+    flashlight.battery = FLASHLIGHT.maxBattery;
+    flashlight.setOn(true);
+    weapon.addAmmo(DESCEND.ammoReward);
     audio.keyPickup();
-    audio.stopAmbience();
-    if (broadcast && (isHost || isClient)) net.sendWin();
-    gameStore.setState({ spectating: false });
-    gameStore.getState().setPhase("victory");
+    setToast(`LEVEL ${l} — DESCEND DEEPER`, 3);
+    gameStore.setState({ spectating: false, health: 100 });
   }
 
   // local player got caught
   function triggerDeath() {
-    if (localDead || won || ended) return;
+    if (localDead || ended) return;
     localDead = true;
     flashlight.setOn(false);
     controller.unlock();
@@ -304,9 +379,9 @@ export function createGame(
     if (localDead && spectating && aliveRemotes().length === 0) gameOver();
   }
 
-  // everyone is dead -> game over
+  // everyone is dead -> game over (your score is the depth reached)
   function gameOver() {
-    if (won || ended) return;
+    if (ended) return;
     ended = true;
     spectating = false;
     audio.stopAmbience();
@@ -329,7 +404,6 @@ export function createGame(
   let fps = 0;
   let stepTimer = 0;
   const tickInterval = 1 / NET.tickHz;
-  const _mpos = new THREE.Vector3();
   const _camPos = new THREE.Vector3();
   const _ray = new THREE.Ray();
   const _hit = new THREE.Vector3();
@@ -410,10 +484,10 @@ export function createGame(
       fpsTimer = 0;
     }
 
-    // Sim runs until the room ends (won) or everyone is dead (ended).
-    // A dead-but-spectating player keeps the loop alive — crucially, a dead HOST
-    // keeps simulating the monster + broadcasting snapshots so survivors aren't stranded.
-    if (!won && !ended) {
+    // Sim runs until everyone is dead (ended). A dead-but-spectating player keeps
+    // the loop alive — crucially a dead HOST keeps simulating + broadcasting so
+    // survivors aren't stranded.
+    if (!ended) {
       flashlight(dt, now); // off & non-draining once dead; fades the beam out
       lighting(dt, now);
 
@@ -426,43 +500,59 @@ export function createGame(
       }
 
       const playerPos = controller.object.position;
-      _mpos.copy(monster.mesh.position);
 
-      // monster targeting (host) -> nearest LIVING player
+      // monster targeting (host) -> each monster chases its nearest LIVING player
       if (isHost) {
         const pts = alivePlayerPoints();
         if (pts.length) {
-          let best = Infinity;
-          let nt = pts[0];
-          for (const p of pts) {
-            const d = (p.x - _mpos.x) ** 2 + (p.z - _mpos.z) ** 2;
-            if (d < best) {
-              best = d;
-              nt = p;
+          for (const m of monsters) {
+            if (!m.alive) continue;
+            const mp = m.mesh.position;
+            let best = Infinity;
+            let nt = pts[0];
+            for (const p of pts) {
+              const d = (p.x - mp.x) ** 2 + (p.z - mp.z) ** 2;
+              if (d < best) {
+                best = d;
+                nt = p;
+              }
             }
+            m.setTarget(nt);
           }
-          monster.setTarget(nt);
         }
       } else if (!isClient && !localDead) {
-        monster.setTarget(playerPos); // solo
+        for (const m of monsters) m.setTarget(playerPos); // solo
       }
 
-      // FREEZE RULE — only living players with a lit beam can freeze it
-      const selfLit =
-        !localDead &&
-        monster.alive &&
-        flashlight.illuminates(camera, _mpos) &&
-        !occluded(_mpos);
-      if (!isClient) {
-        let anyLit = selfLit;
-        remotePlayers.forEach((rp, id) => {
-          if (!deadPeers.has(id) && rp.state.lit) anyLit = true;
-        });
-        monster.setFreeze(monster.alive && anyLit);
+      // FREEZE RULE — a monster freezes if any living player lights *it*.
+      // selfMask bit i = this player is illuminating monster i.
+      let selfMask = 0;
+      if (!localDead) {
+        for (let i = 0; i < monsters.length; i++) {
+          const m = monsters[i];
+          if (
+            m.alive &&
+            flashlight.illuminates(camera, m.mesh.position) &&
+            !occluded(m.mesh.position)
+          ) {
+            selfMask |= 1 << i;
+          }
+        }
       }
-      monster(dt, now);
+      if (!isClient) {
+        let anyMask = selfMask;
+        remotePlayers.forEach((rp, id) => {
+          if (!deadPeers.has(id)) anyMask |= rp.state.lit;
+        });
+        for (let i = 0; i < monsters.length; i++) {
+          const m = monsters[i];
+          m.setFreeze(m.alive && ((anyMask >> i) & 1) === 1);
+        }
+      }
+      for (const m of monsters) m(dt, now);
 
       let keys = keysFoundCount();
+      const totalKeys = levelSpec(level).keys;
       let prompt = "";
       let nearDoor = false;
 
@@ -488,22 +578,23 @@ export function createGame(
         }
 
         // monster contact -> local death
-        const contactDx = _mpos.x - playerPos.x;
-        const contactDz = _mpos.z - playerPos.z;
-        if (
-          monster.alive &&
-          contactDx * contactDx + contactDz * contactDz < 1.15 * 1.15
-        ) {
-          triggerDeath();
+        for (const m of monsters) {
+          if (!m.alive) continue;
+          const dx = m.mesh.position.x - playerPos.x;
+          const dz = m.mesh.position.z - playerPos.z;
+          if (dx * dx + dz * dz < 1.15 * 1.15) {
+            triggerDeath();
+            break;
+          }
         }
 
         keys = keysFoundCount();
         nearDoor = world.doorBox.containsPoint(playerPos);
         if (nearDoor) {
           prompt =
-            keys >= KEYS.count
-              ? "Press E to ESCAPE"
-              : `The door is locked — ${KEYS.count - keys} key(s) left`;
+            keys >= totalKeys
+              ? "Press E to DESCEND"
+              : `The door is locked — ${totalKeys - keys} key(s) left`;
         }
 
         if (controller.moving) {
@@ -527,16 +618,17 @@ export function createGame(
             z: playerPos.z,
             ry: controller.getYaw(),
             flashlightOn: flashlight.on,
-            lit: selfLit,
+            lit: selfMask,
           };
           net.sendState(st);
         }
         if (isHost) {
           const snap: NetSnapshot = {
             seed,
-            monster: monster.getState(),
+            level,
+            monsters: monsters.map((m) => m.getState()),
             keys: pickups.keyState(),
-            doorOpen: keys >= KEYS.count,
+            doorOpen: keys >= totalKeys,
             lightning: lighting.consumeFlashPulse(),
           };
           net.broadcastSnapshot(snap);
@@ -567,7 +659,9 @@ export function createGame(
           reserveAmmo: weapon.reserve,
           maxAmmo: AMMO.max,
           keysFound: keys,
-          monsterFrozen: monster.frozen && monster.alive,
+          keysTotal: totalKeys,
+          level,
+          monsterFrozen: monsters.some((m) => m.frozen && m.alive),
           toast: toastTimer > 0 ? toast : "",
           prompt,
           nearDoor,
@@ -591,27 +685,27 @@ export function createGame(
     resume() {
       audio.resume();
       audio.startAmbience();
-      if (!localDead && !won && !ended) controller.lock();
+      if (!localDead && !ended) controller.lock();
     },
     input: {
       move(x, y) {
-        if (!localDead && !won && !ended) controller.setMoveInput(x, y);
+        if (!localDead && !ended) controller.setMoveInput(x, y);
         else controller.setMoveInput(0, 0);
       },
       look(dx, dy) {
-        if (!localDead && !won && !ended) controller.look(dx, dy);
+        if (!localDead && !ended) controller.look(dx, dy);
       },
       shoot() {
-        if (!localDead && !won && !ended) shoot();
+        if (!localDead && !ended) shoot();
       },
       toggleFlashlight() {
-        if (!localDead && !won && !ended) flashlight.toggle();
+        if (!localDead && !ended) flashlight.toggle();
       },
       reload() {
-        if (!localDead && !won && !ended) weapon.reload();
+        if (!localDead && !ended) weapon.reload();
       },
       interact() {
-        if (!localDead && !won && !ended) tryEscape();
+        if (!localDead && !ended) tryEscape();
       },
       cycleSpectate() {
         if (localDead && spectating) cycleSpectate();
@@ -625,11 +719,9 @@ export function createGame(
       remotePlayers.forEach((_, id) => removeAvatar(id));
       flashlight.dispose();
       weapon.dispose();
-      pickups.dispose();
-      monster.dispose();
+      disposeLevelContent();
       lighting.dispose();
       controller.dispose();
-      world.dispose();
       audio.dispose();
       disposeRenderer();
     },

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0] - 2026-06-22
+
+### Added
+- **Descend — roguelike floors.** Escaping the front door now drops you into a
+  deeper, nastier floor instead of ending the run. Survive as long as you can;
+  your score is how deep you got ("You descended to Level N" on death).
+  - Each floor scales: more brass keys (3→5), more monsters (1→4), faster
+    monsters (up to +85%), faster battery drain (up to 2×), and thickening fog.
+  - Item, key, and monster placement is re-seeded per floor, so every descent
+    feels fresh.
+  - Descent rewards: full battery + bonus ammo. In co-op everyone revives on the
+    new floor (clean slate per descent).
+- **Multiple monsters** — floors 3+ spawn more than one entity. The flashlight
+  freeze rule now tracks each monster independently (per-monster line-of-sight).
+- HUD shows the current floor (`⛓ LEVEL n`) and the live key total for that floor.
+
+### Changed
+- The door prompt now reads "Press E to DESCEND". Co-op escape is
+  host-authoritative: any survivor reaching the door descends the whole room
+  (new `escape`/`descend` netcode events).
+
+### Notes
+- Floors share the base building layout for now — variety comes from difficulty,
+  item placement, and atmosphere. Procedural floor geometry is a future addition.
+
 ## [0.3.1] - 2026-06-20
 
 ### Changed

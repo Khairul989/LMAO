@@ -11,6 +11,7 @@ export interface HudState {
   reserveAmmo: number;
   keysFound: number; // 0..3
   health: number; // 0..100
+  level: number; // current floor depth (1-based)
   monsterFrozen: boolean;
   toast: string; // transient message
   prompt: string; // contextual e.g. "Press E to escape"
@@ -38,7 +39,7 @@ export interface RemoteState {
   z: number;
   ry: number; // yaw
   flashlightOn: boolean;
-  lit: boolean; // is this player currently illuminating the monster (freeze rule input)
+  lit: number; // bitmask: which monsters this player is illuminating (freeze-rule input)
 }
 
 export type PickupKindNet = "battery" | "ammo" | "key";
@@ -53,7 +54,8 @@ export interface MonsterNetState {
 
 export interface NetSnapshot {
   seed: number;
-  monster: MonsterNetState;
+  level: number; // floor the host is simulating (clients resync if behind)
+  monsters: MonsterNetState[];
   keys: boolean[]; // collected flags by index
   doorOpen: boolean;
   lightning: boolean; // flash pulse this tick
@@ -68,6 +70,8 @@ export type NetEvent =
   | { t: "pickup"; kind: PickupKindNet; index: number }
   | { t: "death"; id: string }
   | { t: "win" }
+  | { t: "escape" } // client reached the door -> requests the host descend the room
+  | { t: "descend"; level: number } // host -> all: drop to the next floor
   | { t: "hit"; dmg: number };
 
 export interface ModuleUpdate {

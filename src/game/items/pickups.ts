@@ -36,6 +36,7 @@ export function createPickups(
   world: WorldData,
   rng: () => number,
   audio: AudioEngine,
+  keyCount: number = KEYS.count,
 ): Pickups {
   const group = new THREE.Group();
   group.name = "pickups";
@@ -46,7 +47,7 @@ export function createPickups(
 
   // Candidate rooms (skip foyer index 0 for keys to make them a hunt).
   const rooms = world.roomCenters;
-  const keyRooms = shuffle(rng, rooms.slice(1)).slice(0, KEYS.count);
+  const keyRooms = shuffle(rng, rooms.slice(1)).slice(0, keyCount);
   const batteryRooms = shuffle(rng, rooms).slice(0, BATTERY.count);
   const ammoRooms = shuffle(rng, rooms).slice(0, 3);
 
@@ -157,7 +158,7 @@ export function createPickups(
   };
 
   pk.keyState = () => {
-    const s = [false, false, false];
+    const s = new Array(keyCount).fill(false) as boolean[];
     for (const it of items) {
       if (it.kind === "key") s[it.index] = it.collected;
     }

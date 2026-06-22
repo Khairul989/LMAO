@@ -6,8 +6,10 @@ export interface Flashlight extends ModuleUpdate {
   spot: THREE.SpotLight;
   on: boolean;
   battery: number; // 0..100
+  drainMul: number; // per-level drain multiplier
   toggle(): void;
   setOn(on: boolean): void;
+  setDrainMul(m: number): void;
   addBattery(pct: number): void;
   illuminates(camera: THREE.Camera, worldPoint: THREE.Vector3): boolean;
   dispose(): void;
@@ -46,7 +48,7 @@ export function createFlashlight(camera: THREE.PerspectiveCamera): Flashlight {
 
   const fl: Flashlight = ((dt: number) => {
     if (fl.on && fl.battery > 0) {
-      fl.battery = Math.max(0, fl.battery - FLASHLIGHT.drainPerSec * dt);
+      fl.battery = Math.max(0, fl.battery - FLASHLIGHT.drainPerSec * fl.drainMul * dt);
       if (fl.battery <= 0) {
         fl.on = false;
       }
@@ -64,12 +66,16 @@ export function createFlashlight(camera: THREE.PerspectiveCamera): Flashlight {
   fl.spot = spot;
   fl.on = true;
   fl.battery = FLASHLIGHT.maxBattery;
+  fl.drainMul = 1;
   fl.toggle = () => {
     if (fl.battery > 0) fl.on = !fl.on;
   };
   fl.setOn = (on) => {
     if (on && fl.battery > 0) fl.on = true;
     else if (!on) fl.on = false;
+  };
+  fl.setDrainMul = (m) => {
+    fl.drainMul = m;
   };
   fl.addBattery = (pct) => {
     fl.battery = Math.min(FLASHLIGHT.maxBattery, fl.battery + pct);

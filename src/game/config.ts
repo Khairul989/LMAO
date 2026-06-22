@@ -77,6 +77,33 @@ export const LIGHTNING = {
   flashDecay: 6, // how fast the flash fades
 };
 
+// --- Descend (roguelike floors) ---
+// Each escaped floor drops you into a deeper, nastier one. Difficulty scales
+// with level; the run ends on death and your score is how deep you got.
+export const DESCEND = {
+  ammoReward: 6, // reserve ammo granted on each descent
+};
+
+export interface LevelSpec {
+  keys: number; // brass keys required to open the door
+  monsters: number; // how many entities stalk this floor
+  monsterSpeedMul: number; // chase-speed multiplier
+  batteryDrainMul: number; // flashlight drains faster the deeper you go
+  fogDensity: number; // exponential fog — the dark closes in
+}
+
+// Difficulty curve. Keys cap at 5 (only 5 non-foyer rooms); monsters cap at 4.
+export function levelSpec(level: number): LevelSpec {
+  const L = Math.max(1, level);
+  return {
+    keys: Math.min(2 + L, 5), // L1=3, L2=4, L3=5, …
+    monsters: Math.min(1 + Math.floor((L - 1) / 2), 4), // L1=1,L2=1,L3=2,L5=3,L7=4
+    monsterSpeedMul: Math.min(1 + (L - 1) * 0.1, 1.85), // up to +85% speed
+    batteryDrainMul: Math.min(1 + (L - 1) * 0.08, 2.0), // up to 2× drain
+    fogDensity: Math.min(0.012 + (L - 1) * 0.006, 0.06),
+  };
+}
+
 export const config = {
   PLAYER,
   FLASHLIGHT,

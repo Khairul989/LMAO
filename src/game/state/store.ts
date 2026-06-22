@@ -10,6 +10,7 @@ const initialHud: HudState = {
   reserveAmmo: AMMO.reserve,
   keysFound: 0,
   health: 100,
+  level: 1,
   monsterFrozen: false,
   toast: "",
   prompt: "",

@@ -14,6 +14,7 @@ export function LoadingScreen() {
 }
 
 export function DeathScreen({ onRestart }: { onRestart: () => void }) {
+  const level = useGameStore((s) => s.level);
   return (
     <div className="absolute inset-0 z-40 flex flex-col items-center justify-center overflow-hidden bg-blood/30">
       {/* full-screen red flash + glitch */}
@@ -30,7 +31,10 @@ export function DeathScreen({ onRestart }: { onRestart: () => void }) {
         <h1 className="animate-glitch text-6xl font-black tracking-tighter text-red-500 drop-shadow-[0_0_30px_rgba(255,0,0,0.8)] sm:text-8xl">
           YOU DIED
         </h1>
-        <p className="mt-4 max-w-md text-sm text-red-200/80">
+        <p className="mt-4 text-lg font-bold uppercase tracking-[0.3em] text-red-200">
+          You descended to Level {level}
+        </p>
+        <p className="mt-2 max-w-md text-sm text-red-200/70">
           It caught you in the dark. The flashlight was your only friend, and you
           let it down.
         </p>

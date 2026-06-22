@@ -50,6 +50,8 @@ export default function GameShell() {
       },
       onDeath: () => {},
       onWin: () => {},
+      onEscape: () => {},
+      onDescend: () => {},
       onHit: () => {},
     }),
     [setPhase],

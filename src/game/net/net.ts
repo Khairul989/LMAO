@@ -26,6 +26,8 @@ export interface NetCallbacks {
   onPickup(kind: PickupKindNet, index: number, from: string): void;
   onDeath(id: string): void;
   onWin(): void;
+  onEscape(from: string): void;
+  onDescend(level: number): void;
   onHit(dmg: number): void;
 }
 
@@ -50,6 +52,8 @@ export interface NetManager {
   sendPickup(kind: PickupKindNet, index: number): void;
   sendDeath(id: string): void;
   sendWin(): void;
+  sendEscape(): void;
+  sendDescend(level: number): void;
   broadcastSnapshot(s: NetSnapshot): void;
   sendStart(seed: number): void;
   isHost(): boolean;
@@ -239,6 +243,17 @@ export function createNet(): NetManager {
         hostConn.send({ t: "win" } as NetEvent);
     },
 
+    sendEscape() {
+      // client reached the door with the keys -> ask the host to descend the room
+      if (mode === "join" && hostConn?.open)
+        hostConn.send({ t: "escape" } as NetEvent);
+    },
+
+    sendDescend(level) {
+      // host authoritatively drops everyone to the next floor
+      if (mode === "host") broadcast({ t: "descend", level });
+    },
+
     broadcastSnapshot(s) {
       if (mode === "host") broadcast({ t: "snapshot", s });
     },
@@ -299,6 +314,10 @@ export function createNet(): NetManager {
         cb?.onWin();
         broadcast(ev, conn.peer);
         break;
+      case "escape":
+        // client requests a descent; host adjudicates (does not relay raw request)
+        cb?.onEscape(conn.peer);
+        break;
       default:
         break;
     }
@@ -320,6 +339,9 @@ export function createNet(): NetManager {
         break;
       case "win":
         cb?.onWin();
+        break;
+      case "descend":
+        cb?.onDescend(ev.level);
         break;
       case "hit":
         cb?.onHit(ev.dmg);
